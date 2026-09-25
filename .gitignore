@@ -1,0 +1,7 @@
+/data/*.json
+!/data/.gitkeep
+!/data/.htaccess
+!/data/.gitignore
+.DS_Store
+Thumbs.db
+*.log

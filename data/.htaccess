@@ -1,0 +1,2 @@
+# Deny direct access to data directory if misconfigured under web root
+Require all denied
