@@ -165,6 +165,42 @@ final class PtrService
     }
 
     /**
+     * Resolve PTR record name (+ reverse zone) to the IPv4 it represents.
+     * Handles absolute FQDNs and relative names inside the zone.
+     */
+    public function ptrRecordToIp(string $recordName, string $zoneName = ''): ?string
+    {
+        $recordName = strtolower(rtrim(trim($recordName), '.'));
+        $zoneName = strtolower(rtrim(trim($zoneName), '.'));
+
+        $direct = $this->ptrNameToIp($recordName);
+        if ($direct !== null) {
+            return $direct;
+        }
+
+        if ($recordName === '' || $zoneName === '' || !$this->isReverseZone($zoneName)) {
+            return null;
+        }
+
+        if ($recordName === '@') {
+            return $this->ptrNameToIp($zoneName);
+        }
+
+        // Already ends with zone — try as absolute
+        $suffix = '.' . $zoneName;
+        if (substr($recordName, -strlen($suffix)) === $suffix || $recordName === $zoneName) {
+            return $this->ptrNameToIp($recordName === $zoneName ? $zoneName : $recordName);
+        }
+
+        // Relative label(s), e.g. "131" in zone "5.107.87.in-addr.arpa"
+        if (!preg_match('/^(\d+)(?:\.(\d+)){0,3}$/', $recordName)) {
+            return null;
+        }
+
+        return $this->ptrNameToIp($recordName . '.' . $zoneName);
+    }
+
+    /**
      * Find PTR records matching an IP across cached zones.
      *
      * @return array<int, array{zone:array,record:array,ip:string,hostname:string}>
@@ -200,7 +236,8 @@ final class PtrService
                         continue;
                     }
                     $recName = strtolower(rtrim((string) ($record['name'] ?? ''), '.'));
-                    if ($recName === $ptrName || $this->ptrNameToIp($recName) === $ip) {
+                    $recIp = $this->ptrRecordToIp($recName, $zoneName);
+                    if ($recName === $ptrName || $recIp === $ip) {
                         $key = (string) ($zone['id'] ?? '') . ':' . (string) ($record['id'] ?? '');
                         $results[$key] = [
                             'zone' => $zone,
@@ -350,11 +387,18 @@ final class PtrService
     /**
      * Resolve hostname to IPs via DNS (and optional ping).
      *
-     * @return array{dns_ips:string[],ping_ips:string[],ok:bool,detail:string}
+     * Result statuses:
+     * - ok: hostname resolves (or pings) to the expected IP
+     * - mismatch: hostname resolves to one or more IPs, but NOT the expected one
+     * - unresolved: lookup failed / empty — do NOT treat as auto-delete candidate
+     *
+     * @return array{dns_ips:string[],ping_ips:string[],resolved_ips:string[],ok:bool,status:string,detail:string}
      */
     public function checkHostnamePointsToIp(string $hostname, string $expectedIp, bool $usePing = true): array
     {
-        $hostname = rtrim($hostname, '.');
+        $hostname = strtolower(rtrim(trim($hostname), '.'));
+        $expectedIp = trim($expectedIp);
+
         $dnsIps = $this->resolveDnsIps($hostname);
         $pingIps = [];
         if ($usePing) {
@@ -362,19 +406,35 @@ final class PtrService
         }
 
         $all = array_values(array_unique(array_merge($dnsIps, $pingIps)));
-        $ok = in_array($expectedIp, $dnsIps, true) || in_array($expectedIp, $pingIps, true);
+        $pointsToExpected = in_array($expectedIp, $dnsIps, true) || in_array($expectedIp, $pingIps, true);
+
+        if ($pointsToExpected) {
+            $status = 'ok';
+            $ok = true;
+        } elseif ($all !== []) {
+            // Positive proof it points elsewhere
+            $status = 'mismatch';
+            $ok = false;
+        } else {
+            // Soft failure: DNS/ping gave nothing — often transient or local resolver issue
+            $status = 'unresolved';
+            $ok = false;
+        }
 
         $detailParts = [];
+        $detailParts[] = 'Expected: ' . $expectedIp;
         $detailParts[] = 'DNS: ' . ($dnsIps ? implode(', ', $dnsIps) : 'none');
         if ($usePing) {
             $detailParts[] = 'Ping: ' . ($pingIps ? implode(', ', $pingIps) : 'none/unavailable');
         }
+        $detailParts[] = 'Status: ' . $status;
 
         return [
             'dns_ips' => $dnsIps,
             'ping_ips' => $pingIps,
             'resolved_ips' => $all,
             'ok' => $ok,
+            'status' => $status,
             'detail' => implode(' | ', $detailParts),
         ];
     }
@@ -384,20 +444,46 @@ final class PtrService
      */
     public function resolveDnsIps(string $hostname): array
     {
-        $hostname = rtrim($hostname, '.');
-        if ($hostname === '') {
+        $hostname = strtolower(rtrim(trim($hostname), '.'));
+        if ($hostname === '' || !preg_match('/^[a-z0-9._-]+$/i', $hostname)) {
             return [];
         }
 
-        // Single fast lookup — avoid stacking dns_get_record + gethostbynamel
-        $list = @gethostbynamel($hostname);
-        if (!is_array($list)) {
-            return [];
+        $ips = [];
+
+        // Prefer dns_get_record (A) — more reliable than gethostbynamel alone
+        if (function_exists('dns_get_record')) {
+            $records = @dns_get_record($hostname, DNS_A);
+            if (is_array($records)) {
+                foreach ($records as $row) {
+                    $ip = (string) ($row['ip'] ?? '');
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                        $ips[] = $ip;
+                    }
+                }
+            }
         }
 
-        return array_values(array_unique(array_filter($list, static function ($ip) {
-            return (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4);
-        })));
+        if ($ips === []) {
+            $list = @gethostbynamel($hostname);
+            if (is_array($list)) {
+                foreach ($list as $ip) {
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                        $ips[] = $ip;
+                    }
+                }
+            }
+        }
+
+        // Last resort single lookup
+        if ($ips === []) {
+            $one = @gethostbyname($hostname);
+            if (is_string($one) && $one !== $hostname && filter_var($one, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $ips[] = $one;
+            }
+        }
+
+        return array_values(array_unique($ips));
     }
 
     /**
@@ -543,20 +629,44 @@ final class PtrService
 
             $checked++;
             $recName = (string) ($record['name'] ?? '');
-            $ip = $this->ptrNameToIp($recName);
-            $hostname = rtrim((string) ($record['content'] ?? ''), '.');
+            $ip = $this->ptrRecordToIp($recName, $zoneName);
+            $hostname = strtolower(rtrim(trim((string) ($record['content'] ?? '')), '.'));
             $key = $zoneId . ':' . (string) ($record['id'] ?? '');
             $touchedKeys[$key] = true;
 
             if ($ip === null || $hostname === '') {
                 $mismatched++;
-                $newIssues[] = $this->issueRow($zone, $record, $ip ?: '', $hostname, 'invalid', 'Invalid PTR name or empty hostname', []);
+                $newIssues[] = $this->issueRow(
+                    $zone,
+                    $record,
+                    $ip ?: '',
+                    $hostname,
+                    'invalid',
+                    'Invalid PTR name or empty hostname (cannot derive IP from record/zone)',
+                    []
+                );
                 continue;
             }
 
             $check = $this->checkHostnamePointsToIp($hostname, $ip, $usePing);
-            if ($check['ok']) {
+            if (!empty($check['ok']) || ($check['status'] ?? '') === 'ok') {
                 $okCount++;
+                continue;
+            }
+
+            $status = (string) ($check['status'] ?? 'mismatch');
+            // Soft DNS failure: list as issue, never auto-delete (avoids wiping good PTRs on resolver blips)
+            if ($status === 'unresolved') {
+                $mismatched++;
+                $newIssues[] = $this->issueRow(
+                    $zone,
+                    $record,
+                    $ip,
+                    $hostname,
+                    'unresolved',
+                    $check['detail'] . ' — not auto-deleted (no positive mismatch)',
+                    $check['resolved_ips']
+                );
                 continue;
             }
 
@@ -571,7 +681,8 @@ final class PtrService
                 $check['resolved_ips']
             );
 
-            if ($autoDelete && $account) {
+            // Auto-delete ONLY when hostname resolves to a different IP (hard mismatch)
+            if ($autoDelete && $account && $status === 'mismatch' && !empty($check['resolved_ips'])) {
                 try {
                     $client = new CloudflareClient((string) $account['api_token']);
                     $client->deleteDnsRecord($zoneId, (string) $record['id']);
@@ -584,6 +695,8 @@ final class PtrService
                         'reason' => 'ptr_auto_delete_mismatch',
                         'ip' => $ip,
                         'hostname' => $hostname,
+                        'resolved_ips' => $check['resolved_ips'],
+                        'detail' => $check['detail'],
                     ]);
                     $deleted++;
                     $issue['status'] = 'auto_deleted';

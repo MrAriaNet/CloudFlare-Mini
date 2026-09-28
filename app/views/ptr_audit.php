@@ -29,6 +29,10 @@
             <input type="checkbox" name="auto_delete" value="1" <?= !empty($settings['auto_delete']) ? 'checked' : '' ?>>
             <span>Auto-delete mismatched PTR records when PTR cron/audit runs</span>
         </label>
+        <p class="muted small">
+            Auto-delete only runs when the hostname <strong>resolves to a different IP</strong>.
+            If DNS lookup fails or returns nothing (temporary resolver issues), the PTR is listed but <strong>not</strong> deleted.
+        </p>
         <label class="checkbox">
             <input type="checkbox" name="use_ping" value="1" <?= !empty($settings['use_ping']) ? 'checked' : '' ?>>
             <span>Use ICMP ping on <em>manual</em> audit only (PTR cron always uses fast DNS-only)</span>
