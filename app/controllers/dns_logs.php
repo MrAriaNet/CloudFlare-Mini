@@ -2,21 +2,20 @@
 
 declare(strict_types=1);
 
-$access->requirePermission('view_audit_logs');
+$access->requirePermission('view_dns_logs');
 
 if (is_post()) {
     verify_csrf();
     if (($_POST['form_action'] ?? '') === 'clear') {
-        $access->requirePermission('clear_audit_logs');
-        $count = $logger->clearAudit();
-        $logger->log('logs.clear_audit', $access->user(), ['cleared' => $count]);
-        flash('success', 'Audit logs cleared (' . $count . ' entries).');
-        redirect('r=logs');
+        $access->requirePermission('clear_dns_logs');
+        $count = $logger->clearDns();
+        $logger->log('logs.clear_dns', $access->user(), ['cleared' => $count]);
+        flash('success', 'DNS change logs cleared (' . $count . ' entries).');
+        redirect('r=dns_logs');
     }
 }
 
-$logs = $logger->all();
-// Safety: never show PTR rows here (they live in ptr_logs)
+$logs = $logger->allDns();
 $logs = array_values(array_filter($logs, static function (array $log) use ($logger): bool {
     $ctx = is_array($log['context'] ?? null) ? $log['context'] : [];
     return !$logger->isPtrAction((string) ($log['action'] ?? ''), $ctx);
@@ -44,13 +43,13 @@ $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = resolve_per_page(20);
 $pagination = paginate_items($logs, $page, $perPage);
 
-render('logs', [
-    'title' => 'Audit Logs',
+render('dns_logs', [
+    'title' => 'DNS Change Logs',
     'user' => $access->user(),
     'access' => $access,
     'logs' => $pagination['items'],
     'pagination' => $pagination,
     'q' => $q,
-    'routeName' => 'logs',
-    'active_nav' => 'logs',
+    'routeName' => 'dns_logs',
+    'active_nav' => 'dns_logs',
 ]);

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$access->requireAdmin();
+$access->requirePermission('force_sync');
 
 if (is_post()) {
     verify_csrf();

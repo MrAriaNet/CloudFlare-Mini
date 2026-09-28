@@ -6,6 +6,7 @@
     <?php if (empty($accounts)): ?>
         <p class="muted">No Cloudflare accounts configured.</p>
     <?php else: ?>
+        <div class="table-wrap">
         <table class="table">
             <thead>
             <tr>
@@ -23,13 +24,17 @@
                 $aid = $account['id'] ?? '';
                 $zoneCount = count($zonesByAccount[$aid] ?? []);
                 $m = $meta[$aid] ?? [];
+                $lastSync = $m['last_sync_iso'] ?? ($account['last_sync'] ?? 'Never');
+                $syncNever = ($lastSync === '' || $lastSync === 'Never');
                 ?>
                 <tr>
                     <td><strong><?= e($account['name'] ?? '') ?></strong></td>
                     <td><code><?= e(mask_token((string) ($account['api_token'] ?? ''))) ?></code></td>
-                    <td><?= (int) $zoneCount ?></td>
-                    <td><span class="badge badge-<?= e(($account['status'] ?? '') === 'ok' ? 'ok' : 'warn') ?>"><?= e($account['status'] ?? 'unknown') ?></span></td>
-                    <td><?= e($m['last_sync_iso'] ?? ($account['last_sync'] ?? 'Never')) ?></td>
+                    <td class="col-count"><span class="badge badge-brand"><?= (int) $zoneCount ?> domains</span></td>
+                    <td class="col-status"><span class="badge badge-<?= e(($account['status'] ?? '') === 'ok' ? 'ok' : 'warn') ?>"><?= e($account['status'] ?? 'unknown') ?></span></td>
+                    <td class="col-meta">
+                        <span class="badge badge-<?= $syncNever ? 'warn' : 'info' ?>"><?= e($syncNever ? 'Never' : $lastSync) ?></span>
+                    </td>
                     <td class="actions">
                         <form method="post" action="<?= e(url('r=accounts')) ?>" class="inline">
                             <?= csrf_field() ?>
@@ -50,5 +55,6 @@
             <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     <?php endif; ?>
 </section>

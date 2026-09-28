@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$access->requireAdmin();
+$access->requirePermission('manage_accounts');
 
 if (is_post()) {
     verify_csrf();
@@ -124,6 +124,10 @@ if (is_post()) {
     }
 
     if ($formAction === 'sync') {
+        if (!$access->canSyncAccount()) {
+            http_response_code(403);
+            exit('Forbidden.');
+        }
         $id = (string) ($_POST['id'] ?? '');
         $account = $sync->findAccount($id);
         if (!$account) {

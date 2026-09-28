@@ -106,6 +106,113 @@ function client_ip(): string
     return $_SERVER['REMOTE_ADDR'] ?? 'cli';
 }
 
+/**
+ * @return array{items: array, page: int, per_page: int, total: int, total_pages: int}
+ */
+function paginate_items(array $items, int $page, int $perPage = 20): array
+{
+    $total = count($items);
+    $perPage = max(1, $perPage);
+    $totalPages = max(1, (int) ceil($total / $perPage));
+    $page = max(1, min($page, $totalPages));
+    $offset = ($page - 1) * $perPage;
+
+    return [
+        'items' => array_slice($items, $offset, $perPage),
+        'page' => $page,
+        'per_page' => $perPage,
+        'total' => $total,
+        'total_pages' => $totalPages,
+    ];
+}
+
+/**
+ * Allowed page sizes for list UIs.
+ *
+ * @return int[]
+ */
+function per_page_options(): array
+{
+    return [20, 50, 100];
+}
+
+function resolve_per_page(?int $fallback = 20): int
+{
+    $allowed = per_page_options();
+    $raw = (int) ($_GET['per'] ?? $fallback);
+    if (!in_array($raw, $allowed, true)) {
+        return $fallback;
+    }
+    return $raw;
+}
+
+function pagination_query(array $extra = []): string
+{
+    $params = $_GET;
+    foreach ($extra as $key => $value) {
+        $params[$key] = $value;
+    }
+    if (isset($params['q']) && trim((string) $params['q']) === '') {
+        unset($params['q']);
+    }
+    if (isset($params['page']) && (int) $params['page'] <= 1) {
+        unset($params['page']);
+    }
+    // Drop default per-page from URL clutter
+    if (isset($params['per']) && (int) $params['per'] === 20) {
+        unset($params['per']);
+    }
+    $clean = [];
+    foreach ($params as $key => $value) {
+        if (is_scalar($value)) {
+            $clean[$key] = $value;
+        }
+    }
+    return http_build_query($clean);
+}
+
+/**
+ * Compact HTML chips for log context (avoids huge JSON blobs in tables).
+ */
+function log_context_chips($context): string
+{
+    if (!is_array($context) || $context === []) {
+        return '<span class="muted">—</span>';
+    }
+    $html = '<div class="log-chips">';
+    foreach ($context as $key => $value) {
+        if (is_array($value) || is_object($value)) {
+            $value = json_encode($value, JSON_UNESCAPED_SLASHES);
+        } elseif (is_bool($value)) {
+            $value = $value ? 'true' : 'false';
+        } elseif ($value === null) {
+            $value = 'null';
+        }
+        $text = (string) $value;
+        if (strlen($text) > 120) {
+            $text = substr($text, 0, 117) . '…';
+        }
+        $html .= '<span class="log-chip"><em>' . e((string) $key) . '</em> ' . e($text) . '</span>';
+    }
+    $html .= '</div>';
+    return $html;
+}
+
+/** Friendly UTC display for log timestamps */
+function format_log_time(?string $iso): string
+{
+    if ($iso === null || trim($iso) === '') {
+        return '—';
+    }
+    $iso = trim($iso);
+    try {
+        $dt = new DateTimeImmutable($iso);
+        return $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s') . ' UTC';
+    } catch (Throwable $e) {
+        return $iso;
+    }
+}
+
 function view(string $name, array $data = []): void
 {
     extract($data, EXTR_SKIP);

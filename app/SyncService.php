@@ -6,6 +6,7 @@ final class SyncService
 {
     private JsonStore $store;
     private Logger $logger;
+    private bool $cronLogging = false;
 
     public function __construct(JsonStore $store, Logger $logger)
     {
@@ -13,8 +14,18 @@ final class SyncService
         $this->logger = $logger;
     }
 
+    public function useCronLogging(bool $enabled): void
+    {
+        $this->cronLogging = $enabled;
+    }
+
     public function ensureFresh(?string $accountId = null, bool $force = false): void
     {
+        // Web requests must stay fast — background sync belongs to cron/CLI.
+        if (!$force && !$this->allowBackgroundSync()) {
+            return;
+        }
+
         $accounts = $this->store->read('accounts', []);
         foreach ($accounts as $account) {
             if ($accountId !== null && ($account['id'] ?? '') !== $accountId) {
@@ -27,6 +38,15 @@ final class SyncService
                 $this->syncAccount($account);
             }
         }
+    }
+
+    public function allowBackgroundSync(): bool
+    {
+        if (PHP_SAPI === 'cli') {
+            return true;
+        }
+
+        return (bool) config('web_lazy_sync', false);
     }
 
     public function needsSync(string $accountId): bool
@@ -132,11 +152,16 @@ final class SyncService
                 return $accounts;
             }, []);
 
-            $this->logger->log('sync.failed', null, [
+            $payload = [
                 'account_id' => $accountId,
                 'account_name' => $account['name'] ?? '',
                 'error' => $e->getMessage(),
-            ]);
+            ];
+            if ($this->cronLogging) {
+                $this->logger->cron('sync.failed', ['username' => 'cron'], $payload);
+            } else {
+                $this->logger->log('sync.failed', null, $payload);
+            }
 
             return false;
         }

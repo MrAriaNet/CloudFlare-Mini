@@ -17,16 +17,26 @@
         </label>
 
         <label>
-            <span>Role</span>
-            <select name="role" id="operator-role">
+            <span>Access level</span>
+            <select name="role" id="operator-role" required>
                 <?php
-                $role = $operator['role'] ?? 'viewer';
-                foreach (['admin' => 'Admin — full access', 'editor' => 'Editor — DNS changes', 'viewer' => 'Viewer — read only'] as $value => $label):
+                $selectedRole = $operator['role'] ?? (($assignableRoles[0]['id'] ?? 'viewer'));
+                foreach ($assignableRoles as $roleOption):
+                    $rid = (string) ($roleOption['id'] ?? '');
+                    $label = ($roleOption['name'] ?? $rid) . ' (rank ' . (int) ($roleOption['rank'] ?? 0) . ')';
+                    if (!empty($roleOption['description'])) {
+                        $label .= ' — ' . $roleOption['description'];
+                    }
                 ?>
-                    <option value="<?= e($value) ?>" <?= $role === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                    <option value="<?= e($rid) ?>"
+                        data-rank="<?= (int) ($roleOption['rank'] ?? 0) ?>"
+                        <?= $selectedRole === $rid ? 'selected' : '' ?>>
+                        <?= e($label) ?>
+                    </option>
                 <?php endforeach; ?>
             </select>
         </label>
+        <p class="muted small">You can only assign levels at or below your allowed maximum. Higher levels are hidden.</p>
 
         <fieldset class="domain-access" id="domain-access-box">
             <legend>Domain access</legend>

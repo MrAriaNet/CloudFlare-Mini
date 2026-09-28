@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
-$access->requireAdmin();
+$access->requireManageOperators();
 
 $action = $_GET['action'] ?? 'list';
+$rolesSvc = $access->roles();
+$currentUser = $access->user();
+$assignableRoles = $access->assignableRoles();
 
 if (is_post()) {
     verify_csrf();
@@ -23,25 +26,31 @@ if (is_post()) {
         $allowedZoneIds = array_values(array_filter(array_map('strval', $allowedZoneIds)));
         $active = !empty($_POST['active']);
 
-        if (!in_array($role, ['admin', 'editor', 'viewer'], true)) {
+        if (!$access->canAssignRole($role)) {
+            flash('error', 'You cannot assign that access level.');
+            redirect('r=operators');
+        }
+
+        $roleDef = $rolesSvc->find($role);
+        if (!$roleDef) {
             flash('error', 'Invalid role.');
             redirect('r=operators');
         }
+
         if (!in_array($domainAccess, ['all', 'selected'], true)) {
             $domainAccess = 'selected';
         }
-        if ($role === 'admin') {
+        if (($roleDef['id'] ?? '') === 'admin' || $rolesSvc->rank($roleDef) >= 100) {
             $domainAccess = 'all';
             $allowedZoneIds = [];
         }
         if ($username === '') {
             flash('error', 'Username is required.');
-            redirect('r=operators&action=' . ($formAction === 'create' ? 'create' : 'edit&id=' . urlencode($id)));
+            redirect('r=operators&action=' . ($formAction === 'create' ? 'create' : ('edit&id=' . urlencode($id))));
         }
 
         $operators = $store->read('operators', []);
 
-        // Unique username
         foreach ($operators as $op) {
             if (strcasecmp((string) ($op['username'] ?? ''), $username) === 0) {
                 if ($formAction === 'create' || ($op['id'] ?? '') !== $id) {
@@ -56,6 +65,10 @@ if (is_post()) {
                 flash('error', 'Password is required for new operators.');
                 redirect('r=operators&action=create');
             }
+            if ($assignableRoles === []) {
+                flash('error', 'Your access level cannot create operators.');
+                redirect('r=operators');
+            }
             $operator = [
                 'id' => uuid(),
                 'username' => $username,
@@ -65,12 +78,13 @@ if (is_post()) {
                 'allowed_zone_ids' => $allowedZoneIds,
                 'active' => $active,
                 'created_at' => now_iso(),
+                'created_by' => $currentUser['id'] ?? null,
             ];
             $store->update('operators', function (array $list) use ($operator): array {
                 $list[] = $operator;
                 return $list;
             }, []);
-            $logger->log('operator.create', $access->user(), [
+            $logger->log('operator.create', $currentUser, [
                 'operator_id' => $operator['id'],
                 'username' => $username,
                 'role' => $role,
@@ -92,11 +106,40 @@ if (is_post()) {
             redirect('r=operators');
         }
 
-        // Prevent locking yourself out of admin
-        $current = $access->user();
-        if (($current['id'] ?? '') === $id && $role !== 'admin') {
-            flash('error', 'You cannot remove your own admin role.');
-            redirect('r=operators&action=edit&id=' . urlencode($id));
+        if (($currentUser['id'] ?? '') !== $id && !$access->canManageOperator($existing)) {
+            flash('error', 'You cannot edit this operator.');
+            redirect('r=operators');
+        }
+
+        // Editing self: cannot raise own role beyond what you can assign; demoting self away from top role if last admin
+        if (($currentUser['id'] ?? '') === $id) {
+            if ($role !== ($existing['role'] ?? '') && !$access->canAssignRole($role)) {
+                flash('error', 'You cannot change your own role to that level.');
+                redirect('r=operators&action=edit&id=' . urlencode($id));
+            }
+            $newRole = $rolesSvc->findOrFallback($role);
+            if ($rolesSvc->rank($access->role()) >= 100 && $rolesSvc->rank($newRole) < 100) {
+                $adminsLeft = 0;
+                foreach ($operators as $op) {
+                    if (($op['id'] ?? '') === $id) {
+                        continue;
+                    }
+                    $r = $rolesSvc->findOrFallback((string) ($op['role'] ?? ''));
+                    if ($rolesSvc->rank($r) >= 100 && !empty($op['active'])) {
+                        $adminsLeft++;
+                    }
+                }
+                if ($adminsLeft < 1) {
+                    flash('error', 'You cannot remove the last administrator role.');
+                    redirect('r=operators&action=edit&id=' . urlencode($id));
+                }
+            }
+        } else {
+            // Changing target to a new role must be assignable; also cannot edit if current target is out of reach
+            if (!$access->canAssignRole($role)) {
+                flash('error', 'You cannot assign that access level.');
+                redirect('r=operators&action=edit&id=' . urlencode($id));
+            }
         }
 
         $store->update('operators', function (array $list) use ($id, $username, $password, $role, $domainAccess, $allowedZoneIds, $active): array {
@@ -117,7 +160,7 @@ if (is_post()) {
             return $list;
         }, []);
 
-        $logger->log('operator.update', $access->user(), [
+        $logger->log('operator.update', $currentUser, [
             'operator_id' => $id,
             'username' => $username,
             'role' => $role,
@@ -129,28 +172,31 @@ if (is_post()) {
 
     if ($formAction === 'delete') {
         $id = (string) ($_POST['id'] ?? '');
-        $current = $access->user();
-        if (($current['id'] ?? '') === $id) {
+        if (($currentUser['id'] ?? '') === $id) {
             flash('error', 'You cannot delete your own account.');
             redirect('r=operators');
         }
         $deleted = null;
-        $store->update('operators', function (array $list) use ($id, &$deleted): array {
-            $out = [];
-            foreach ($list as $op) {
-                if (($op['id'] ?? '') === $id) {
-                    $deleted = $op;
-                    continue;
-                }
-                $out[] = $op;
+        foreach ($store->read('operators', []) as $op) {
+            if (($op['id'] ?? '') === $id) {
+                $deleted = $op;
+                break;
             }
-            return $out;
-        }, []);
+        }
         if (!$deleted) {
             flash('error', 'Operator not found.');
             redirect('r=operators');
         }
-        $logger->log('operator.delete', $access->user(), [
+        if (!$access->canManageOperator($deleted)) {
+            flash('error', 'You cannot delete this operator.');
+            redirect('r=operators');
+        }
+        $store->update('operators', function (array $list) use ($id): array {
+            return array_values(array_filter($list, static function (array $op) use ($id): bool {
+                return ($op['id'] ?? '') !== $id;
+            }));
+        }, []);
+        $logger->log('operator.delete', $currentUser, [
             'operator_id' => $id,
             'username' => $deleted['username'] ?? '',
         ]);
@@ -165,15 +211,22 @@ foreach ($store->read('zones', []) as $zones) {
         $allZones[] = $zone;
     }
 }
-usort($allZones, static fn(array $a, array $b): int => strcmp($a['name'] ?? '', $b['name'] ?? ''));
+usort($allZones, static function (array $a, array $b): int {
+    return strcmp($a['name'] ?? '', $b['name'] ?? '');
+});
 
 if ($action === 'create') {
+    if ($assignableRoles === []) {
+        flash('error', 'Your access level cannot create operators. Ask an administrator to raise max assignable rank.');
+        redirect('r=operators');
+    }
     render('operators_form', [
         'title' => 'Add Operator',
-        'user' => $access->user(),
+        'user' => $currentUser,
         'access' => $access,
         'operator' => null,
         'allZones' => $allZones,
+        'assignableRoles' => $assignableRoles,
         'active_nav' => 'operators',
     ]);
     return;
@@ -192,12 +245,41 @@ if ($action === 'edit') {
         flash('error', 'Operator not found.');
         redirect('r=operators');
     }
+    $isSelf = ($currentUser['id'] ?? '') === ($operator['id'] ?? '');
+    if (!$isSelf && !$access->canManageOperator($operator)) {
+        flash('error', 'You cannot edit this operator.');
+        redirect('r=operators');
+    }
+
+    // For edit form, include current role in options even if somehow edge-case
+    $roleOptions = $assignableRoles;
+    $currentRoleId = (string) ($operator['role'] ?? '');
+    $hasCurrent = false;
+    foreach ($roleOptions as $r) {
+        if (($r['id'] ?? '') === $currentRoleId) {
+            $hasCurrent = true;
+            break;
+        }
+    }
+    if (!$hasCurrent && $isSelf) {
+        $selfRole = $rolesSvc->find($currentRoleId);
+        if ($selfRole) {
+            $roleOptions[] = $selfRole;
+        }
+    } elseif (!$hasCurrent && $access->canAssignRole($currentRoleId)) {
+        $cr = $rolesSvc->find($currentRoleId);
+        if ($cr) {
+            $roleOptions[] = $cr;
+        }
+    }
+
     render('operators_form', [
         'title' => 'Edit Operator',
-        'user' => $access->user(),
+        'user' => $currentUser,
         'access' => $access,
         'operator' => $operator,
         'allZones' => $allZones,
+        'assignableRoles' => $roleOptions,
         'active_nav' => 'operators',
     ]);
     return;
@@ -207,9 +289,10 @@ $operators = $store->read('operators', []);
 
 render('operators', [
     'title' => 'Operators',
-    'user' => $access->user(),
+    'user' => $currentUser,
     'access' => $access,
     'operators' => $operators,
     'allZones' => $allZones,
+    'rolesSvc' => $rolesSvc,
     'active_nav' => 'operators',
 ]);

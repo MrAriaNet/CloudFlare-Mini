@@ -18,21 +18,68 @@
             </div>
         </div>
         <nav class="nav">
-            <a class="<?= ($active_nav ?? '') === 'dashboard' ? 'active' : '' ?>" href="<?= e(url('r=dashboard')) ?>">Dashboard</a>
-            <?php if ($access->canManageAccounts()): ?>
-                <a class="<?= ($active_nav ?? '') === 'accounts' ? 'active' : '' ?>" href="<?= e(url('r=accounts')) ?>">Accounts</a>
+            <div class="nav-group">
+                <div class="nav-label">Overview</div>
+                <a class="<?= ($active_nav ?? '') === 'dashboard' ? 'active' : '' ?>" href="<?= e(url('r=dashboard')) ?>">Dashboard</a>
+                <?php if ($access->canManageAccounts()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'accounts' ? 'active' : '' ?>" href="<?= e(url('r=accounts')) ?>">Accounts</a>
+                <?php endif; ?>
+                <?php if ($access->canViewDomains()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'domains' ? 'active' : '' ?>" href="<?= e(url('r=domains')) ?>">Domains</a>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($access->canViewPtrAudit() || $access->canViewPtrLogs()): ?>
+            <div class="nav-group">
+                <div class="nav-label">PTR</div>
+                <?php if ($access->canViewPtrAudit()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'ptr_audit' ? 'active' : '' ?>" href="<?= e(url('r=ptr_audit')) ?>">PTR Audit</a>
+                <?php endif; ?>
+                <?php if ($access->canViewPtrLogs()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'ptr_logs' ? 'active' : '' ?>" href="<?= e(url('r=ptr_logs')) ?>">PTR Logs</a>
+                <?php endif; ?>
+            </div>
             <?php endif; ?>
-            <a class="<?= ($active_nav ?? '') === 'domains' ? 'active' : '' ?>" href="<?= e(url('r=domains')) ?>">Domains</a>
-            <?php if ($access->canManageOperators()): ?>
-                <a class="<?= ($active_nav ?? '') === 'operators' ? 'active' : '' ?>" href="<?= e(url('r=operators')) ?>">Operators</a>
+
+            <?php if ($access->canManageIpAllowlist() || $access->canManageOperators() || $access->canManageRoles()): ?>
+            <div class="nav-group">
+                <div class="nav-label">Access</div>
+                <?php if ($access->canManageIpAllowlist()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'ip_allowlist' ? 'active' : '' ?>" href="<?= e(url('r=ip_allowlist')) ?>">IP Allowlist</a>
+                <?php endif; ?>
+                <?php if ($access->canManageOperators()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'operators' ? 'active' : '' ?>" href="<?= e(url('r=operators')) ?>">Operators</a>
+                <?php endif; ?>
+                <?php if ($access->canManageRoles()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'roles' ? 'active' : '' ?>" href="<?= e(url('r=roles')) ?>">Access Levels</a>
+                <?php endif; ?>
+            </div>
             <?php endif; ?>
-            <a class="<?= ($active_nav ?? '') === 'logs' ? 'active' : '' ?>" href="<?= e(url('r=logs')) ?>">Audit Logs</a>
-            <a class="<?= ($active_nav ?? '') === 'password' ? 'active' : '' ?>" href="<?= e(url('r=password')) ?>">Change Password</a>
+
+            <?php if ($access->canViewAuditLogs() || $access->canViewDnsLogs() || $access->canViewCronLogs()): ?>
+            <div class="nav-group">
+                <div class="nav-label">Logs</div>
+                <?php if ($access->canViewAuditLogs()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'logs' ? 'active' : '' ?>" href="<?= e(url('r=logs')) ?>">Audit Logs</a>
+                <?php endif; ?>
+                <?php if ($access->canViewDnsLogs()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'dns_logs' ? 'active' : '' ?>" href="<?= e(url('r=dns_logs')) ?>">DNS Change Logs</a>
+                <?php endif; ?>
+                <?php if ($access->canViewCronLogs()): ?>
+                    <a class="<?= ($active_nav ?? '') === 'cron_logs' ? 'active' : '' ?>" href="<?= e(url('r=cron_logs')) ?>">Cron Logs</a>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+
+            <div class="nav-group">
+                <div class="nav-label">Account</div>
+                <a class="<?= ($active_nav ?? '') === 'password' ? 'active' : '' ?>" href="<?= e(url('r=password')) ?>">Change Password</a>
+            </div>
         </nav>
         <div class="sidebar-footer">
             <div class="user-chip">
                 <strong><?= e($user['username'] ?? '') ?></strong>
-                <span><?= e(strtoupper((string) ($user['role'] ?? ''))) ?></span>
+                <span><?= e($access->role()['name'] ?? strtoupper((string) ($user['role'] ?? ''))) ?></span>
             </div>
             <a class="btn btn-ghost btn-block" href="<?= e(url('r=logout')) ?>">Sign out</a>
         </div>

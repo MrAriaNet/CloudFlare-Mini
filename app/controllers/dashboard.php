@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-$sync->ensureFresh();
-
 $accounts = $store->read('accounts', []);
 $zonesByAccount = $store->read('zones', []);
 $meta = $store->read('meta', []);

@@ -2,28 +2,34 @@
 
 declare(strict_types=1);
 
-$access->requirePermission('view_audit_logs');
+if (!$access->canViewPtrLogs()) {
+    http_response_code(403);
+    exit('Forbidden.');
+}
 
 if (is_post()) {
     verify_csrf();
     if (($_POST['form_action'] ?? '') === 'clear') {
-        $access->requirePermission('clear_audit_logs');
-        $count = $logger->clearAudit();
-        $logger->log('logs.clear_audit', $access->user(), ['cleared' => $count]);
-        flash('success', 'Audit logs cleared (' . $count . ' entries).');
-        redirect('r=logs');
+        if (!$access->canClearPtrLogs()) {
+            http_response_code(403);
+            exit('Forbidden.');
+        }
+        $count = $logger->clearPtr();
+        $logger->ptr('ptr.logs.clear', $access->user(), ['cleared' => $count]);
+        flash('success', 'PTR logs cleared (' . $count . ' entries).');
+        redirect('r=ptr_logs');
     }
 }
 
-$logs = $logger->all();
-// Safety: never show PTR rows here (they live in ptr_logs)
-$logs = array_values(array_filter($logs, static function (array $log) use ($logger): bool {
-    $ctx = is_array($log['context'] ?? null) ? $log['context'] : [];
-    return !$logger->isPtrAction((string) ($log['action'] ?? ''), $ctx);
-}));
+$logs = $logger->allPtr();
 if (!$access->canViewAllLogs()) {
     $uid = $access->user()['id'] ?? '';
     $logs = array_values(array_filter($logs, static function (array $log) use ($uid): bool {
+        // Allow system/cron PTR rows for users who can view PTR audit
+        $actor = (string) ($log['actor_username'] ?? '');
+        if (in_array($actor, ['ptr_cron', 'ptr_audit', 'ptr', 'cron', 'system'], true)) {
+            return true;
+        }
         return ($log['actor_id'] ?? '') === $uid;
     }));
 }
@@ -44,13 +50,13 @@ $page = max(1, (int) ($_GET['page'] ?? 1));
 $perPage = resolve_per_page(20);
 $pagination = paginate_items($logs, $page, $perPage);
 
-render('logs', [
-    'title' => 'Audit Logs',
+render('ptr_logs', [
+    'title' => 'PTR Logs',
     'user' => $access->user(),
     'access' => $access,
     'logs' => $pagination['items'],
     'pagination' => $pagination,
     'q' => $q,
-    'routeName' => 'logs',
-    'active_nav' => 'logs',
+    'routeName' => 'ptr_logs',
+    'active_nav' => 'ptr_logs',
 ]);
